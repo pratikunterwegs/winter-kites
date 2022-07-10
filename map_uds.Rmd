@@ -141,6 +141,9 @@ pa = lapply(
 )
 
 # all pas have the same crs, which is also WGS84 (4326)
+
+# merge PAS into a single object, combining by type
+pa = dplyr::bind_rows(pa)
 ```
 
 ```{r}
@@ -148,11 +151,10 @@ pa = lapply(
 sf::sf_use_s2(FALSE)
 ```
 
-```{r}
-# merge PAS into a single object, combining by type
-pa = dplyr::bind_rows(pa)
+## Calculate overlap with kite UDs
 
-# get overlap between kites and pas
+```{r}
+# get overlap between kites and pas, separately per PA type
 overlap = st_intersection(kites, pa)
 
 # get area of each overlap
@@ -172,6 +174,8 @@ group_by(
     overlap_area = sum(area)
   )
 ```
+
+## Link PA overlap with kite UD area
 
 ```{r}
 # get actual kite UD area
@@ -242,4 +246,3 @@ readr::write_csv(
   total_pa_overlap, file = "data/total_pa_overlap.csv"
 )
 ```
-
