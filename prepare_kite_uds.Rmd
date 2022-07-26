@@ -23,10 +23,13 @@ ce_kite_files = list.files(path = "data/new_central_europe_shapefiles",
 ```
 
 ```{r}
+# get layer names
+layer_names = st_layers("data/new_central_europe_shapefiles/")
+
 # get kite names from files using regular expressions
-kite_names = str_extract(ce_kite_files, pattern = "(?<=shapefiles/)(.*?)(?=_)")
+kite_names = str_extract(layer_names$name, pattern = "(.*?)(?=_)")
 # get polygon number from shapefile names using regex
-poly_number = poly_number = str_extract(ce_kite_files, "(?<=POLY)(\\d{1})")
+poly_number = poly_number = str_extract(layer_names$name, "(?<=POLY)(\\d{1})")
 
 # get kite names and polygons
 ce_kites = tibble(
@@ -183,5 +186,98 @@ ggplot(spain_kite_sf, aes(fill = kite_id))+
 st_write(
   spain_kite_sf,
   dsn = "data/spain_kites.gpkg"
+)
+```
+
+## UK kites
+
+```{r}
+# list folders and files
+uk_kite_files = list.files(path = "data/Kite shapefiles", 
+                      full.names = T, pattern = ".shp")
+
+# list kite shapefiles
+layer_names = st_layers(dsn = "data/Kite shapefiles/")
+
+# get kite names
+kite_names = str_extract(layer_names$name, "(.*?)(?=_)")
+
+# all in one shapefile
+poly_number = "1"
+
+# get kite names and polygons
+uk_kites = tibble(
+  kite_id = kite_names,
+  poly_number = poly_number,
+  file = uk_kite_files
+)
+```
+
+Read the file associated with each kite and polygon, and combine by id using `st_union`.
+
+```{r}
+# read files
+uk_kite_sf = lapply(uk_kite_files, st_read)
+
+# check for uniform crs --- all should be the same (UTM 33N)
+sapply(uk_kite_sf, function(x) st_crs(x)$proj4string)
+
+# convert all to zone 33N
+uk_kite_sf = lapply(uk_kite_sf, st_transform, 32633)
+```
+
+```{r}
+# combine the id data with sf data
+uk_kite_sf = mutate(
+  uk_kites, sf_data = uk_kite_sf
+)
+
+# unnest the data - essentially splitting 95 and 50 % KDEs into separate rows per kite
+uk_kite_sf = tidyr::unnest(uk_kite_sf, cols = "sf_data")
+
+# the data is now a tibble (data frame), not an sf object any longer
+```
+
+```{r}
+# remove unnecessary rows
+uk_kite_sf = select(
+  uk_kite_sf,
+  kite_id, 
+  PERCENT = CORE., 
+  geometry
+)
+
+# remove percentage sign
+uk_kite_sf = mutate(
+  uk_kite_sf,
+  PERCENT = str_remove(PERCENT, "%")
+)
+
+# re-convert to sf object
+uk_kite_sf = st_as_sf(
+  uk_kite_sf, crs = 32633
+)
+
+# combine by kite id and KDE percent
+uk_kite_sf = group_by(
+  uk_kite_sf,
+  kite_id, PERCENT
+) |> 
+  summarise(.groups = "keep")
+```
+
+```{r}
+# sanity check - plot and see
+ggplot(uk_kite_sf, aes(fill = kite_id))+
+  geom_sf()+
+  facet_grid(~PERCENT)
+```
+
+```{r}
+# save to single object in UTM 33N CRS
+# saving as a geopackage, a single convenient file format
+st_write(
+  uk_kite_sf,
+  dsn = "data/uk_kites.gpkg"
 )
 ```
