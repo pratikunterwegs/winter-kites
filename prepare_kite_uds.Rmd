@@ -1,0 +1,187 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(sf)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+
+# set S2 use to false
+sf_use_s2(FALSE)
+```
+
+## Central Europe kites
+
+```{r}
+# list folders and files
+ce_kite_files = list.files(path = "data/new_central_europe_shapefiles", 
+                      full.names = T, pattern = ".shp")
+```
+
+```{r}
+# get kite names from files using regular expressions
+kite_names = str_extract(ce_kite_files, pattern = "(?<=shapefiles/)(.*?)(?=_)")
+# get polygon number from shapefile names using regex
+poly_number = poly_number = str_extract(ce_kite_files, "(?<=POLY)(\\d{1})")
+
+# get kite names and polygons
+ce_kites = tibble(
+  kite_id = kite_names,
+  poly_number = poly_number,
+  file = ce_kite_files
+)
+```
+
+Read the file associated with each kite and polygon, and combine by id using `st_union`.
+
+```{r}
+# read files
+ce_kite_sf = lapply(ce_kite_files, st_read)
+
+# check for uniform crs --- all should be the same (UTM 33N)
+sapply(ce_kite_sf, function(x) st_crs(x)$proj4string)
+```
+
+```{r}
+# combine the id data with sf data
+ce_kite_sf = mutate(
+  ce_kites, sf_data = ce_kite_sf
+)
+
+# unnest the data - essentially splitting 95 and 50 % KDEs into separate rows per kite
+ce_kite_sf = tidyr::unnest(ce_kite_sf, cols = "sf_data")
+
+# the data is now a tibble (data frame), not an sf object any longer
+```
+
+```{r}
+# remove unnecessary rows
+ce_kite_sf = select(
+  ce_kite_sf,
+  kite_id, PERCENT, geometry
+)
+
+# re-convert to sf object
+ce_kite_sf = st_as_sf(
+  ce_kite_sf, crs = 32633
+)
+
+# combine by kite id and KDE percent
+ce_kite_sf = group_by(
+  ce_kite_sf,
+  kite_id, PERCENT
+) |> 
+  summarise(.groups = "keep")
+```
+
+```{r}
+# sanity check - plot and see
+ggplot(ce_kite_sf, aes(fill = kite_id))+
+  geom_sf()+
+  facet_grid(~PERCENT)
+```
+
+```{r}
+# save to single object in UTM 33N CRS
+# saving as a geopackage, a single convenient file format
+st_write(
+  ce_kite_sf,
+  dsn = "data/ce_kites.gpkg"
+)
+```
+
+## Spain kites
+
+```{r}
+# list folders and files
+spain_kite_files = list.files(path = "data/Spanish kites", 
+                      full.names = T, pattern = ".shp")
+
+# get kite ids --- the format is kites/NAME_NUMBERS_areaX, or NAME_NUMBERS_X
+kite_id = str_extract(spain_kite_files, pattern = "(?<=kites/)(.*?)(?=area|50|95)")
+# strip trailing underscore
+kite_id = str_sub(kite_id, start = 1, end = -2)
+
+# get area and KDE percent
+area_id = str_extract(spain_kite_files, pattern = "(?<=area)(\\d{1})")
+# set NAs to 1, but as character
+area_id[is.na(area_id)] = "1"
+
+# handle KDE percent
+PERCENT = str_extract(spain_kite_files, "50|95")
+```
+
+```{r}
+# combine all data on spanish kites
+spain_kites = tibble(
+  kite_id = kite_id,
+  poly_number = area_id,
+  PERCENT = PERCENT,
+  file = spain_kite_files
+)
+```
+
+```{r}
+# read in data
+spain_kite_sf = lapply(spain_kite_files, st_read)
+
+# check CRS
+sapply(spain_kite_sf, function(x) st_crs(x)$proj4string)
+
+# there is not CRS, assign WGS 84
+spain_kite_sf = lapply(spain_kite_sf, `st_crs<-`, 4326)
+
+# check CRS AGAIN
+sapply(spain_kite_sf, function(x) st_crs(x)$proj4string)
+```
+
+```{r}
+# combine with kite data
+spain_kite_sf = mutate(
+  spain_kites, sf_data = spain_kite_sf
+)
+
+# unnest data
+spain_kite_sf = tidyr::unnest(
+  spain_kite_sf, cols = "sf_data"
+)
+
+# handle multipolygons in geometry
+spain_kite_sf = mutate(
+  spain_kite_sf,
+  geometry = st_cast(geometry, "MULTIPOLYGON")
+)
+
+# select same columns as in ce kites
+spain_kite_sf = select(
+  spain_kite_sf, kite_id, PERCENT, geometry
+)
+
+# reconvert to sf
+spain_kite_sf = st_as_sf(spain_kite_sf)
+
+# combine by id and percent
+spain_kite_sf = group_by(
+  spain_kite_sf, kite_id, PERCENT
+) |> 
+  summarise()
+```
+
+```{r}
+# sanity check
+ggplot(spain_kite_sf, aes(fill = kite_id))+
+  geom_sf()+
+  facet_grid(~PERCENT)
+```
+
+```{r}
+# save as WGS 84 geopackage
+st_write(
+  spain_kite_sf,
+  dsn = "data/spain_kites.gpkg"
+)
+```
