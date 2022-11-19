@@ -182,10 +182,13 @@ ggplot(spain_kite_sf, aes(fill = kite_id))+
 ```
 
 ```{r}
-# save as WGS 84 geopackage
+# make UTM33N
+spain_kite_sf = st_transform(spain_kite_sf, 32633)
+
+# save as UTM 33N
 st_write(
   spain_kite_sf,
-  dsn = "data/spain_kites.gpkg"
+  dsn = "data/spain_kites.gpkg", append = F
 )
 ```
 
@@ -221,6 +224,14 @@ uk_kite_sf = lapply(uk_kite_files, st_read)
 
 # check for uniform crs --- all should be the same (UTM 33N)
 sapply(uk_kite_sf, function(x) st_crs(x)$proj4string)
+
+# add code to check for NA crs and assign UTM 33N
+uk_kite_sf = lapply(uk_kite_sf, function(x) {
+  if(is.na(st_crs(x))) {
+    st_crs(x) = 32633
+  }
+  x
+})
 
 # convert all to zone 33N
 uk_kite_sf = lapply(uk_kite_sf, st_transform, 32633)
