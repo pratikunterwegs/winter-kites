@@ -13,45 +13,48 @@ library(tidyr)
 
 ```{r}
 # list kite files
-kite_sf = list.files(
+kite_sf <- list.files(
   path = "data", pattern = "kites.gpkg", full.names = TRUE
 )
 
 # read in data
-kite_sf = lapply(kite_sf, st_read)
+kite_sf <- lapply(kite_sf, st_read)
 
 # handle percent column
-kite_sf = lapply(kite_sf, function(x) {
-  x$PERCENT = as.character(x$PERCENT)
+kite_sf <- lapply(kite_sf, function(x) {
+  x$PERCENT <- as.character(x$PERCENT)
   x
 })
 
 # combine all
-kite_sf = bind_rows(kite_sf)
+kite_sf <- bind_rows(kite_sf)
+
+# cast all kites to WGS 84 for overlap calculations
+kite_sf_wgs_84 = st_transform(kite_sf, 4326)
 ```
 
 ## Load PA files
 
 ```{r}
 # read in data
-pa_types = st_layers(
+pa_types <- st_layers(
   "data/Protected areas shapefiles/"
 )
 
 # read in as list
-pa = lapply(
+pa <- lapply(
   pa_types$name, function(l) {
-    pa_ = st_read(
+    pa_ <- st_read(
       dsn = "data/Protected areas shapefiles/",
       layer = l
-    ) |> 
+    ) |>
       mutate(
         pa_type = l
       )
-    
+
     # cast to simple polygons to improve processing
-    pa_ = st_cast(pa_, "POLYGON")
-    
+    pa_ <- st_cast(pa_, "POLYGON")
+
     pa_
   }
 )
@@ -59,7 +62,7 @@ pa = lapply(
 # all pas have the same crs, which is also WGS84 (4326)
 
 # merge PAS into a single object, combining by type
-pa = dplyr::bind_rows(pa)
+pa <- dplyr::bind_rows(pa)
 ```
 
 ```{r}
@@ -71,21 +74,21 @@ sf::sf_use_s2(FALSE)
 
 ```{r}
 # get overlap between kites and pas, separately per PA type
-overlap = st_intersection(kites, pa)
+overlap <- st_intersection(kite_sf_wgs_84, pa)
 
 # get area of each overlap
-overlap = mutate(
+overlap <- mutate(
   overlap,
   area = as.numeric(st_area(overlap) / (1000 * 1000)) # in km2
 )
 
 # summarise overlap by kite id and protected area type
-overlap_summary = st_drop_geometry(
+overlap_summary <- st_drop_geometry(
   overlap
-) |> 
-group_by(
-  kite_id, PERCENT, pa_type
-) |> 
+) |>
+  group_by(
+    kite_id, PERCENT, pa_type
+  ) |>
   summarise(
     overlap_area = sum(area)
   )
@@ -95,30 +98,30 @@ group_by(
 
 ```{r}
 # get actual kite UD area
-kite_area = kites |> 
+kite_area <- kite_sf |>
   mutate(
-    ud_area = as.numeric(st_area(kites) / (1000 * 1000)) # in km2
+    ud_area = as.numeric(st_area(kite_sf) / (1000 * 1000)) # in km2
   )
 
 # prep for joining to overlap
-kite_area = st_drop_geometry(kite_area) |> 
+kite_area <- st_drop_geometry(kite_area) |>
   select(kite_id, PERCENT, ud_area)
 
 # some kite UDs are in multiple parts, sum
-kite_area = kite_area |> 
-  group_by(kite_id, PERCENT) |> 
+kite_area <- kite_area |>
+  group_by(kite_id, PERCENT) |>
   summarise(
     ud_area = sum(ud_area)
   )
 
 # join the overlap data and kite UD area
-overlap_summary =
-  overlap_summary |> 
+overlap_summary <-
+  overlap_summary |>
   select(
     kite_id, PERCENT, pa_type, overlap_area
-  ) |> 
+  ) |>
   left_join(
-    kite_area, 
+    kite_area,
     by = c(
       "kite_id", "PERCENT"
     )
@@ -135,30 +138,31 @@ readr::write_csv(
 
 ```{r}
 # combine spatial overlaps into single features by ID
-total_overlap = overlap |> 
+total_overlap <- overlap |>
   group_by(
     kite_id, PERCENT
-  ) |> 
+  ) |>
   summarise()
 
 # get total area of the overlap, regardless of pa_type
-total_overlap = ungroup(total_overlap) |> 
+total_overlap <- ungroup(total_overlap) |>
   mutate(
     total_pa_overlap = as.numeric(st_area(total_overlap)) / (1000 * 1000)
-)
+  )
 
 # drop geomtery and prepare for joining with kite UD area
-total_overlap = st_drop_geometry(total_overlap)
+total_overlap <- st_drop_geometry(total_overlap)
 ```
 
 ```{r}
 # join total pa overlap with total ud area
-total_pa_overlap = left_join(
+total_pa_overlap <- left_join(
   kite_area, total_overlap
 )
 
 # save to file
 readr::write_csv(
-  total_pa_overlap, file = "data/total_pa_overlap.csv"
+  total_pa_overlap,
+  file = "data/total_pa_overlap.csv"
 )
 ```

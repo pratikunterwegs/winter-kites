@@ -6,7 +6,8 @@ editor_options:
 
 ```{r}
 library(sf)
-library(dplyr)
+library(data.table)
+library(dplyr) # because it provides sf sugar
 library(stringr)
 library(ggplot2)
 
@@ -18,21 +19,35 @@ sf_use_s2(FALSE)
 
 ```{r}
 # list folders and files
-ce_kite_files = list.files(path = "data/new_central_europe_shapefiles", 
-                      full.names = T, pattern = ".shp")
+ce_kite_files <- list.files(
+  path = "data/new_central_europe_shapefiles",
+  full.names = T,
+  pattern = ".shp"
+)
 ```
 
 ```{r}
 # get layer names
-layer_names = st_layers("data/new_central_europe_shapefiles/")
+layer_names <- st_layers("data/new_central_europe_shapefiles/")
 
 # get kite names from files using regular expressions
-kite_names = str_extract(layer_names$name, pattern = "(.*?)(?=_)")
+kite_names <- str_extract(layer_names$name, pattern = "(.*?)(?=_)")
+
 # get polygon number from shapefile names using regex
-poly_number = poly_number = str_extract(layer_names$name, "(?<=POLY)(\\d{1})")
+poly_number <- poly_number <- str_extract(layer_names$name, "(?<=POLY)(\\d{1})")
+
+# detect kite names which have files
+has_file = lapply(kite_names, function(n) {
+  any(str_detect(string = ce_kite_files, pattern = n))
+}) |>
+  unlist()
+
+# subset names and polygons which have files
+kite_names <- kite_names[has_file]
+poly_number <- poly_number[has_file]
 
 # get kite names and polygons
-ce_kites = tibble(
+ce_kites <- data.table(
   kite_id = kite_names,
   poly_number = poly_number,
   file = ce_kite_files
@@ -43,48 +58,74 @@ Read the file associated with each kite and polygon, and combine by id using `st
 
 ```{r}
 # read files
-ce_kite_sf = lapply(ce_kite_files, st_read)
+ce_kite_sf <- lapply(ce_kite_files, st_read)
 
 # check for uniform crs --- all should be the same (UTM 33N)
+sapply(ce_kite_sf, function(x) st_crs(x)$proj4string)
+
+# some data are missing a CRS, assign UTM 33N
+has_no_crs <- is.na(sapply(ce_kite_sf, function(x) st_crs(x)$proj4string))
+
+ce_kite_sf <- Map(
+  ce_kite_sf, has_no_crs,
+  f = function(df, hnc) {
+    if(hnc) {
+      st_crs(df) = 32633
+    }
+    df
+  }
+)
+
+# check again for uniform crs
 sapply(ce_kite_sf, function(x) st_crs(x)$proj4string)
 ```
 
 ```{r}
 # combine the id data with sf data
-ce_kite_sf = mutate(
-  ce_kites, sf_data = ce_kite_sf
+ce_kite_sf <- data.table(
+  ce_kites,
+  sf_data = ce_kite_sf
 )
 
-# unnest the data - essentially splitting 95 and 50 % KDEs into separate rows per kite
-ce_kite_sf = tidyr::unnest(ce_kite_sf, cols = "sf_data")
+# count number of columns in each sf data object
+ce_kite_sf[, sf_cols := unlist(lapply(sf_data, ncol))]
 
-# the data is now a tibble (data frame), not an sf object any longer
+# check which have few cols
+ce_kite_sf[sf_cols == 1,]
+
+# remove kites with bad data
+bad_ce_kites = unique(ce_kite_sf[sf_cols == 1,]$kite_id)
+ce_kite_sf = ce_kite_sf[!kite_id %in% bad_ce_kites]
+
+# unnest the data - essentially splitting 95 and 50 % KDEs into separate rows per kite
+ce_kite_sf <- ce_kite_sf[, unlist(sf_data, recursive = FALSE), 
+                         by = c("kite_id", "poly_number", "file")]
+
+# the data is now a data.table (data frame), not an sf object any longer
 ```
 
 ```{r}
 # remove unnecessary rows
-ce_kite_sf = select(
-  ce_kite_sf,
-  kite_id, PERCENT, geometry
-)
+ce_kite_sf <- ce_kite_sf[, c("kite_id", "PERCENT", "geometry")]
 
 # re-convert to sf object
-ce_kite_sf = st_as_sf(
-  ce_kite_sf, crs = 32633
+ce_kite_sf <- st_as_sf(
+  ce_kite_sf,
+  crs = 32633
 )
 
 # combine by kite id and KDE percent
-ce_kite_sf = group_by(
+ce_kite_sf <- group_by(
   ce_kite_sf,
   kite_id, PERCENT
-) |> 
+) |>
   summarise(.groups = "keep")
 ```
 
 ```{r}
 # sanity check - plot and see
-ggplot(ce_kite_sf, aes(fill = kite_id))+
-  geom_sf()+
+ggplot(ce_kite_sf, aes(fill = kite_id)) +
+  geom_sf(show.legend = FALSE) +
   facet_grid(~PERCENT)
 ```
 
@@ -101,26 +142,30 @@ st_write(
 
 ```{r}
 # list folders and files
-spain_kite_files = list.files(path = "data/Spanish kites", 
-                      full.names = T, pattern = ".shp")
+spain_kite_files <- list.files(
+  path = "data/Spanish kites",
+  full.names = T, pattern = ".shp"
+)
 
 # get kite ids --- the format is kites/NAME_NUMBERS_areaX, or NAME_NUMBERS_X
-kite_id = str_extract(spain_kite_files, pattern = "(?<=kites/)(.*?)(?=area|50|95)")
+kite_id <- str_extract(spain_kite_files, pattern = "(?<=kites/)(.*?)(?=area|50|95)")
+
 # strip trailing underscore
-kite_id = str_sub(kite_id, start = 1, end = -2)
+kite_id <- str_sub(kite_id, start = 1, end = -2)
 
 # get area and KDE percent
-area_id = str_extract(spain_kite_files, pattern = "(?<=area)(\\d{1})")
+area_id <- str_extract(spain_kite_files, pattern = "(?<=area)(\\d{1})")
+
 # set NAs to 1, but as character
-area_id[is.na(area_id)] = "1"
+area_id[is.na(area_id)] <- "1"
 
 # handle KDE percent
-PERCENT = str_extract(spain_kite_files, "50|95")
+PERCENT <- str_extract(spain_kite_files, "50|95")
 ```
 
 ```{r}
 # combine all data on spanish kites
-spain_kites = tibble(
+spain_kites <- data.table(
   kite_id = kite_id,
   poly_number = area_id,
   PERCENT = PERCENT,
@@ -130,13 +175,13 @@ spain_kites = tibble(
 
 ```{r}
 # read in data
-spain_kite_sf = lapply(spain_kite_files, st_read)
+spain_kite_sf <- lapply(spain_kite_files, st_read)
 
 # check CRS
 sapply(spain_kite_sf, function(x) st_crs(x)$proj4string)
 
 # there is not CRS, assign WGS 84
-spain_kite_sf = lapply(spain_kite_sf, `st_crs<-`, 4326)
+spain_kite_sf <- lapply(spain_kite_sf, `st_crs<-`, 4326)
 
 # check CRS AGAIN
 sapply(spain_kite_sf, function(x) st_crs(x)$proj4string)
@@ -144,51 +189,62 @@ sapply(spain_kite_sf, function(x) st_crs(x)$proj4string)
 
 ```{r}
 # combine with kite data
-spain_kite_sf = mutate(
-  spain_kites, sf_data = spain_kite_sf
+spain_kite_sf <- data.table(
+  spain_kites,
+  sf_data = spain_kite_sf
 )
+
+# count number of columns in each sf data object
+spain_kite_sf[, sf_cols := unlist(lapply(sf_data, ncol))]
+
+# check which have different number of cols
+spain_kite_sf[,sf_cols]
+
+# fix issue with sf data at position 2, generalise for all data
+spain_kite_sf$sf_data = lapply(spain_kite_sf$sf_data, select, id, area, geometry)
 
 # unnest data
-spain_kite_sf = tidyr::unnest(
-  spain_kite_sf, cols = "sf_data"
-)
+spain_kite_sf <- spain_kite_sf[, unlist(sf_data, recursive = FALSE),
+                               by = c("kite_id", "poly_number", "PERCENT", "file")]
 
 # handle multipolygons in geometry
-spain_kite_sf = mutate(
+spain_kite_sf <- mutate(
   spain_kite_sf,
   geometry = st_cast(geometry, "MULTIPOLYGON")
 )
 
 # select same columns as in ce kites
-spain_kite_sf = select(
+spain_kite_sf <- select(
   spain_kite_sf, kite_id, PERCENT, geometry
 )
 
 # reconvert to sf
-spain_kite_sf = st_as_sf(spain_kite_sf)
+spain_kite_sf <- st_as_sf(spain_kite_sf)
 
 # combine by id and percent
-spain_kite_sf = group_by(
+spain_kite_sf <- group_by(
   spain_kite_sf, kite_id, PERCENT
-) |> 
+) |>
   summarise()
+
+# ^ expet warnings about merging polygons here
 ```
 
 ```{r}
 # sanity check
-ggplot(spain_kite_sf, aes(fill = kite_id))+
-  geom_sf()+
+ggplot(spain_kite_sf, aes(fill = kite_id)) +
+  geom_sf(show.legend = FALSE) +
   facet_grid(~PERCENT)
 ```
 
 ```{r}
 # make UTM33N
-spain_kite_sf = st_transform(spain_kite_sf, 32633)
+spain_kite_sf <- st_transform(spain_kite_sf, 32633)
 
 # save as UTM 33N
 st_write(
   spain_kite_sf,
-  dsn = "data/spain_kites.gpkg", append = F
+  dsn = "data/spain_kites.gpkg", append = FALSE
 )
 ```
 
@@ -196,20 +252,22 @@ st_write(
 
 ```{r}
 # list folders and files
-uk_kite_files = list.files(path = "data/Kite shapefiles", 
-                      full.names = T, pattern = ".shp")
+uk_kite_files <- list.files(
+  path = "data/Kite shapefiles",
+  full.names = T, pattern = ".shp"
+)
 
 # list kite shapefiles
-layer_names = st_layers(dsn = "data/Kite shapefiles/")
+layer_names <- st_layers(dsn = "data/Kite shapefiles/")
 
 # get kite names
-kite_names = str_extract(layer_names$name, "(.*?)(?=_)")
+kite_names <- str_extract(layer_names$name, "(.*?)(?=_)")
 
 # all in one shapefile
-poly_number = "1"
+poly_number <- "1"
 
 # get kite names and polygons
-uk_kites = tibble(
+uk_kites <- data.table(
   kite_id = kite_names,
   poly_number = poly_number,
   file = uk_kite_files
@@ -220,67 +278,68 @@ Read the file associated with each kite and polygon, and combine by id using `st
 
 ```{r}
 # read files
-uk_kite_sf = lapply(uk_kite_files, st_read)
+uk_kite_sf <- lapply(uk_kite_files, st_read)
 
 # check for uniform crs --- all should be the same (UTM 33N)
 sapply(uk_kite_sf, function(x) st_crs(x)$proj4string)
 
 # add code to check for NA crs and assign UTM 33N
-uk_kite_sf = lapply(uk_kite_sf, function(x) {
-  if(is.na(st_crs(x))) {
-    st_crs(x) = 32633
+uk_kite_sf <- lapply(uk_kite_sf, function(x) {
+  if (is.na(st_crs(x))) {
+    st_crs(x) <- 32633
   }
   x
 })
 
 # convert all to zone 33N
-uk_kite_sf = lapply(uk_kite_sf, st_transform, 32633)
+uk_kite_sf <- lapply(uk_kite_sf, st_transform, 32633)
 ```
 
 ```{r}
 # combine the id data with sf data
-uk_kite_sf = mutate(
-  uk_kites, sf_data = uk_kite_sf
+uk_kite_sf <- data.table(
+  uk_kites,
+  sf_data = uk_kite_sf
 )
 
+# select useful columns
+uk_kite_sf[, sf_data := lapply(sf_data, select, ID, CORE., geometry)]
+
 # unnest the data - essentially splitting 95 and 50 % KDEs into separate rows per kite
-uk_kite_sf = tidyr::unnest(uk_kite_sf, cols = "sf_data")
+uk_kite_sf <- uk_kite_sf[, unlist(sf_data, recursive = FALSE),
+  by = c("kite_id", "poly_number", "file")]
 
 # the data is now a tibble (data frame), not an sf object any longer
 ```
 
 ```{r}
 # remove unnecessary rows
-uk_kite_sf = select(
-  uk_kite_sf,
-  kite_id, 
-  PERCENT = CORE., 
-  geometry
-)
+uk_kite_sf <- uk_kite_sf[, c("kite_id", "CORE.", "geometry")]
+
+# set name of CORE. to PERCENT
+setnames(uk_kite_sf, "CORE.", "PERCENT")
 
 # remove percentage sign
-uk_kite_sf = mutate(
-  uk_kite_sf,
-  PERCENT = str_remove(PERCENT, "%")
-)
+uk_kite_sf[, PERCENT := str_remove(PERCENT, "%")]
 
 # re-convert to sf object
-uk_kite_sf = st_as_sf(
-  uk_kite_sf, crs = 32633
+uk_kite_sf <- st_as_sf(
+  uk_kite_sf,
+  crs = 32633
 )
 
 # combine by kite id and KDE percent
-uk_kite_sf = group_by(
+uk_kite_sf <- group_by(
   uk_kite_sf,
   kite_id, PERCENT
-) |> 
+) |>
   summarise(.groups = "keep")
 ```
 
 ```{r}
 # sanity check - plot and see
-ggplot(uk_kite_sf, aes(fill = kite_id))+
-  geom_sf()+
+ggplot(uk_kite_sf, aes(fill = kite_id)) +
+  geom_sf() +
   facet_grid(~PERCENT)
 ```
 

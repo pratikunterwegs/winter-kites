@@ -21,7 +21,7 @@ library(ggplot2)
 ```{r}
 # install package for high resolution map data
 # if it is not already installed; if installed load it
-if(!require("rnaturalearthhires")) {
+if (!require("rnaturalearthhires")) {
   devtools::install_github("ropensci/rnaturalearthhires")
 }
 ```
@@ -30,16 +30,16 @@ if(!require("rnaturalearthhires")) {
 
 ```{r}
 # list kite folders
-kite_folders = list.dirs(path = "data")
+kite_folders <- list.dirs(path = "data")
 ```
 
 
 ```{r}
 # list kite shapefiles
-kites = st_layers(dsn = "data/Kite shapefiles/")
+kites <- st_layers(dsn = "data/Kite shapefiles/")
 
 # read in kite shapefiles as a list of sf objects
-kites = lapply(
+kites <- lapply(
   kites$name, function(l) {
     st_read(
       dsn = "data/Kite shapefiles/",
@@ -49,20 +49,21 @@ kites = lapply(
 )
 
 # convert all to geographic coordinates for uniformity
-kites = lapply(kites, st_transform, crs = 4326)
+kites <- lapply(kites, st_transform, crs = 4326)
 
 # combine list into a single sf object
-kites = dplyr::bind_rows(kites)
+kites <- dplyr::bind_rows(kites)
 
 # arrange by name and core status
-kites = arrange(
+kites <- arrange(
   kites,
   CORE.
 )
 
 # set factor levels
-kites$CORE. = factor(
-  kites$CORE., levels = c("95%", "50%")
+kites$CORE. <- factor(
+  kites$CORE.,
+  levels = c("95%", "50%")
 )
 ```
 
@@ -71,18 +72,18 @@ kites$CORE. = factor(
 ```{r}
 # plot kite UDs over europe
 # first get europe
-countries = st_as_sf(rnaturalearthhires::countries10)
+countries <- st_as_sf(rnaturalearthhires::countries10)
 
 # includes russia, guyana and bits; crop
 # set bounds at iceland to the north, and israel to the east
-eu_bounds = filter(
+eu_bounds <- filter(
   countries, NAME %in% c("Iceland", "Israel")
-) |> 
-  st_bbox() |> 
+) |>
+  st_bbox() |>
   st_as_sfc()
 
 # crop by polygon
-eu = st_crop(
+eu <- st_crop(
   countries, eu_bounds
 )
 
@@ -96,7 +97,7 @@ assertthat::assert_that(
 
 ```{r}
 # plot kites on maps
-ggplot()+
+ggplot() +
   geom_sf(
     data = eu,
     col = "grey",
@@ -112,8 +113,8 @@ ggplot()+
   scale_fill_viridis_d(
     direction = -1,
     limits = c("95%", "50%")
-  )+
-  theme_bw()+
+  ) +
+  theme_bw() +
   coord_sf(
     crs = 32631, # choose a good projection for western EU
     expand = F
