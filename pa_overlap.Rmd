@@ -7,16 +7,7 @@ editor_options:
 library(sf)
 library(dplyr)
 library(tidyr)
-```
-
-## Load kite geopackages
-
-```{r}
-# list kite files
-kite_sf <- st_read("data/kite_sf.gpkg")
-
-# cast all kites to WGS 84 for overlap calculations
-kite_sf_wgs_84 <- st_transform(kite_sf, 4326)
+library(assertthat)
 ```
 
 ## Load PA files
@@ -45,11 +36,22 @@ pa <- lapply(
   }
 )
 
-# all PAs do not have the same CRS, convert to WGS84
-pa <- lapply(pa, st_transform, 4326)
+# all PAs do not have the same CRS, convert to 3035
+# now convert to UTM 33N
+pa[[2]] <- st_transform(pa[[2]], st_crs(pa[[1]]))
 
 # merge PAS into a single object, combining by type
 pa <- dplyr::bind_rows(pa)
+```
+
+## Load kite geopackages
+
+```{r}
+# list kite files
+kite_sf <- st_read("data/kite_sf.gpkg")
+
+# cast all kites to WGS 84 for overlap calculations
+kite_sf <- st_transform(kite_sf, st_crs(pa))
 ```
 
 ```{r}
@@ -61,23 +63,29 @@ sf::sf_use_s2(FALSE)
 
 ```{r}
 # get overlap between kites and pas, separately per PA type
-overlap <- st_intersection(kite_sf_wgs_84, pa)
+overlap <- st_intersection(kite_sf, pa)
+
+# group and summarise
+overlap <- group_by(
+  overlap,
+  kite_id, kde_percent, year_start, year_end, pa_type
+) |>
+  summarise()
 
 # get area of each overlap
-overlap <- mutate(
-  overlap,
-  area = as.numeric(st_area(overlap) / (1000 * 1000)) # in km2
-)
+overlap <- ungroup(overlap) |>
+  mutate(
+    overlap,
+    area = as.numeric(st_area(overlap) / (1000 * 1000)) # in km2
+  )
 
 # summarise overlap by kite id and protected area type
 overlap_summary <- st_drop_geometry(
   overlap
 ) |>
-  group_by(
-    kite_id, kde_percent, year_start, year_end, pa_type
-  ) |>
-  summarise(
-    overlap_area = sum(area)
+  as_tibble() |>
+  rename(
+    overlap_area = area
   )
 ```
 
@@ -114,6 +122,11 @@ overlap_summary <- left_join(
 # data now has zeros for PA types in each year if the kite
 # did not overlap with that type
 
+# check that all overlap areas are less than or equal to 1.0
+assert_that(
+  all((overlap_summary$overlap_area / overlap_summary$ud_area) <= 1.0)
+)
+
 # save data
 readr::write_csv(
   overlap_summary,
@@ -148,8 +161,17 @@ total_pa_overlap <- left_join(
 ) |>
   select(-id) |>
   as_tibble() |>
-  mutate(total_pa_overlap = if_else(is.na(total_pa_overlap), 0, total_pa_overlap)) |>
+  mutate(
+    total_pa_overlap = if_else(is.na(total_pa_overlap), 0, total_pa_overlap)
+  ) |>
   rename(ud_area = area)
+
+# check that overlaps are not greater than 1.0
+assert_that(
+  all(
+    (total_pa_overlap$total_pa_overlap / total_pa_overlap$ud_area) <= 1
+  )
+)
 
 # save to file
 readr::write_csv(
