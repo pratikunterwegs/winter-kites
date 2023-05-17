@@ -35,7 +35,8 @@ kite_crs <- vapply(kite_data, function(x) {
 # check any na
 anyNA(kite_crs)
 
-# convert to UTM 33 for area calculations
+# convert to Lambert equal area conic CRS for area calculations
+# first convert to WGS 84
 kite_data <- Map(
   kite_data, kite_crs,
   f = function(x, crs) {
@@ -55,7 +56,7 @@ kite_data <- Map(
   kite_data, kite_crs,
   f = function(x, crs) {
     if (grepl(x = crs, pattern = "longlat")) {
-      x <- st_transform(x, 32633)
+      x <- st_transform(x, 3035)
     }
     x
   }
