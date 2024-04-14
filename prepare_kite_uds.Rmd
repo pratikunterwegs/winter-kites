@@ -55,12 +55,16 @@ kite_crs <- vapply(kite_data, function(x) {
 kite_data <- Map(
   kite_data, kite_crs,
   f = function(x, crs) {
-    if (grepl(x = crs, pattern = "longlat")) {
-      x <- st_transform(x, 3035)
+    if (st_crs(x)$proj4string != "+proj=longlat +datum=WGS84 +no_defs") {
+      x <- st_transform(x, 4326)
     }
     x
   }
 )
+
+kite_crs <- vapply(kite_data, function(x) {
+  st_crs(x)$proj4string
+}, FUN.VALUE = "string")
 
 # check the length of each dataframe, must be 1
 rows <- vapply(kite_data, nrow, FUN.VALUE = 1)
