@@ -36,12 +36,17 @@ pa <- lapply(
   }
 )
 
-# all PAs do not have the same CRS, convert to 3035
-# now convert to UTM 33N
-pa[[2]] <- st_transform(pa[[2]], st_crs(pa[[1]]))
+# all PAs do not have the same CRS, convert to UTM 33N
+pa <- lapply(pa, st_transform, 3035)
 
 # merge PAS into a single object, combining by type
 pa <- dplyr::bind_rows(pa)
+
+# save to check in QGIS
+st_write(
+  pa,
+  dsn = "pa_laea.gpkg", append = FALSE
+)
 ```
 
 ## Load kite geopackages
@@ -50,8 +55,13 @@ pa <- dplyr::bind_rows(pa)
 # list kite files
 kite_sf <- st_read("data/kite_sf.gpkg")
 
-# cast all kites to WGS 84 for overlap calculations
-kite_sf <- st_transform(kite_sf, st_crs(pa))
+# cast to 3035
+kite_sf <- st_transform(kite_sf, 3035)
+
+st_write(
+  kite_sf,
+  dsn = "kite_ud_laea.gpkg", append = FALSE
+)
 ```
 
 ```{r}
@@ -126,6 +136,16 @@ overlap_summary <- left_join(
 assert_that(
   all((overlap_summary$overlap_area / overlap_summary$ud_area) <= 1.0)
 )
+
+# check proportions that are > 1.0
+(overlap_summary$overlap_area / overlap_summary$ud_area)[
+  (overlap_summary$overlap_area / overlap_summary$ud_area) > 1.0
+]
+
+# issue appears to be at the level of 6 decimal places or more,
+# probably safe to take these values as 1.0
+# issue likely caused by calculating UD area before transforming to
+# EPSG:3035 LAEA
 
 # save data
 readr::write_csv(
